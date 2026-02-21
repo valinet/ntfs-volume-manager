@@ -1,0 +1,17 @@
+disk
+fs/bin/bootstrap
+fs/bin/busybox
+fs/bin/espid
+fs/bin/exfatid
+fs/etc
+fs/init
+fs/lib
+fs/usr
+linux
+src/bootstrap/bootstrap
+src/espid/espid
+src/exfatid/exfatid
+src/setdio/setdio
+*.o
+init.cpio
+

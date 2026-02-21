@@ -1,0 +1,16 @@
+[Unit]
+Description=MySnapshot
+DefaultDependencies=no
+After=local-fs.target
+Before=shutdown.target reboot.target
+
+[Service]
+Type=simple
+ExecStart=/home/user/projects/tiny/snap/shot.sh
+User=root
+Group=root
+RemainAfterExit=no
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

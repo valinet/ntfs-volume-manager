@@ -1,0 +1,58 @@
+#!/bin/sh
+TARGET_EXFATID="DEAD-BEEF"
+TARGET_NTFSID="CAFEBABEDEADBEEF"
+TARGET_PATH=/boot/media/arch.vhd
+
+to_upper() {
+    echo "$1" | sed 'y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/'
+}
+
+exfatid_builtin() {
+    dd if=$1 bs=1 skip=100 count=4 2>/dev/null | hexdump -v -e '1/1 "%02X"' | sed 's/\(..\)\(..\)\(..\)\(..\)/\4\3-\2\1/'
+}
+
+ntfsid_builtin() {
+    dd if="$1" bs=1 skip=72 count=8 2>/dev/null | hexdump -e '8/1 "%02x"' | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)/\8\7\6\5\4\3\2\1/'
+}
+
+exec >/dev/console 2>&1
+mount -t devtmpfs dev dev
+mount -t proc proc proc
+mount -t sysfs sys sys
+mkdir /disk
+[ -f /bin/espid ] || modprobe loop
+[ -f /bin/espid ] || modprobe xhci_hcd
+[ -f /bin/espid ] || modprobe uas
+[ -f /bin/espid ] || modprobe nvme
+for i in $(seq 1 10); do
+    ls /dev
+    for dev in /dev/*; do
+        [ -b "$dev" ] || continue
+        id=$(exfatid_builtin "$dev" 2>/dev/null)
+        if [ "$(to_upper "$id")" = "$(to_upper "$TARGET_EXFATID")" ]; then
+            mount "$dev" /disk
+            break 2
+        fi
+        id=$(ntfsid_builtin "$dev" 2>/dev/null)
+        if [ "$(to_upper "$id")" = "$(to_upper "$TARGET_NTFSID")" ]; then
+            mount -t ntfs3 -o force "$dev" /disk
+            break 2
+        fi
+    done
+    sleep 1
+done
+losetup -fP /disk$TARGET_PATH
+base64 -d << 'EOF' > /bin/setdio
+f0VMRgIBAQAAAAAAAAAAAAIAPgABAAAAeAABAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAEAAOAAB
+AAAAAAAAAAEAAAAFAAAAAAAAAAAAAAAAAAEAAAAAAAAAAQAAAAAA6QAAAAAAAADpAAAAAAAAAAAQ
+AAAAAAAASIs8JEiNdCQISIPsCEgxwEj/yEiD/wJ1LkiLfgi+AgAAAEgx0ugvAAAAUEiJx74ITAAA
+SDHSSP/C6CMAAABf6CUAAABIMcBIice4PAAAAA8FuDwAAAAPBcO4AgAAAA8Fw7gQAAAADwXDuAMA
+AAAPBcM=
+EOF
+chmod +x /bin/setdio
+/bin/setdio /dev/loop0
+[ -f /bin/espid ] || exec /init "$@"
+mount $(espid /dev/loop0) /boot
+
+/bin/sh -c "bootstrap $(find /boot -name *.efi)" </dev/console >/dev/console 2>&1
+/bin/sh </dev/console >/dev/console 2>&1
