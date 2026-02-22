@@ -1,7 +1,8 @@
 #!/bin/sh
+BOOT_DEBIAN=1
 TARGET_EXFATID="DEAD-BEEF"
 TARGET_NTFSID="CAFEBABEDEADBEEF"
-TARGET_PATH=/boot/media/arch.vhd
+[ "$BOOT_DEBIAN" = "1" ] && TARGET_PATH=/boot/media/debian.vhd || TARGET_PATH=/boot/media/arch.vhd
 
 to_upper() {
     echo "$1" | sed 'y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/'
@@ -16,14 +17,20 @@ ntfsid_builtin() {
 }
 
 exec >/dev/console 2>&1
+[ "$BOOT_DEBIAN" = "1" ] && mkdir /rofs
+mkdir /disk
+mkdir /proc
+mkdir /sys
 mount -t devtmpfs dev dev
 mount -t proc proc proc
 mount -t sysfs sys sys
-mkdir /disk
 [ -f /bin/espid ] || modprobe loop
 [ -f /bin/espid ] || modprobe xhci_hcd
 [ -f /bin/espid ] || modprobe uas
 [ -f /bin/espid ] || modprobe nvme
+[ -f /bin/espid ] || modprobe virtio
+[ -f /bin/espid ] || modprobe virtio_pci
+[ -f /bin/espid ] || modprobe virtio_blk
 for i in $(seq 1 10); do
     ls /dev
     for dev in /dev/*; do
@@ -53,6 +60,7 @@ chmod +x /bin/setdio
 /bin/setdio /dev/loop0
 [ -f /bin/espid ] || exec /init "$@"
 mount $(espid /dev/loop0) /boot
-
-/bin/sh -c "bootstrap $(find /boot -name *.efi)" </dev/console >/dev/console 2>&1
+[ "$BOOT_DEBIAN" = "1" ] && mount $(blkid | grep $(grep 'search.fs_uuid' /boot/EFI/debian/grub.cfg | awk '{print $2}') | awk '{print $1}' | sed 's/.$//') /rofs
+[ "$BOOT_DEBIAN" = "1" ] && /bin/sh -c "bootstrap /rofs/boot/grub/grub.cfg" </dev/console >/dev/console 2>&1
+[ "$BOOT_DEBIAN" = "1" ] || /bin/sh -c "bootstrap $(find /boot -name *.efi)" </dev/console >/dev/console 2>&1
 /bin/sh </dev/console >/dev/console 2>&1

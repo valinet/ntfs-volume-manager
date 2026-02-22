@@ -105,6 +105,48 @@ struct uki_sections {
     size_t  cmdline_size;
 };
 
+// https://github.com/valinet/libvalinet/blob/master/valinet/utility/memmem.h
+const char* memmem(const char* text, size_t haystacklen, const char* pattern, size_t needlelen) {
+    const char* rv = NULL;
+
+    size_t out[needlelen];
+    for (int i = 0; i < needlelen; ++i)
+        out[i] = 0;
+    size_t j, i;
+
+    j = 0, i = 1;
+    while (i < needlelen) {
+        if (text[j] != text[i]) {
+            if (j > 0) {
+                j = out[j - 1];
+                continue;
+            }
+            else j--;
+        }
+        j++;
+        out[i] = j;
+        i++;
+    }
+
+    i = 0, j = 0;
+    for (i = 0; i <= haystacklen; i++) {
+        if (text[i] == pattern[j]) {
+            j++;
+            if (j == needlelen) {
+                rv = text + (size_t)(i - needlelen + 1); //match++; j = out[j - 1];
+                break;
+            }
+        } else {
+            if (j != 0) {
+                j = out[j - 1];
+                i--;
+            }
+        }
+    }
+
+    return rv;
+}
+
 static size_t strlen(const char *s) {
     size_t len = 0;
     while (s[len]) len++;
@@ -386,7 +428,7 @@ static size_t pad4(size_t n) {
     return (4 - (n & 3)) & 3;
 }
 
-static size_t build_loop_setup_cpio(void *buf, const char *img_path) {
+static size_t build_loop_setup_cpio(void *buf) {
     char *p = buf;
     size_t pos = 0;
     size_t namelen, padlen, script_len;
@@ -529,24 +571,73 @@ int main(int argc, char** argv) {
     size_t combined_size;
     size_t cpio_size;
     char cmdline[256];
+    char *grub_kernel, *grub_initrd, *grub_cmdline;
 
     if (argc != 2) {
         sys_write(2, "Usage: bootstrap /boot/EFI/Linux/arch-linux.efi\n", 49);
         return -1;
     }
 
-    uki_data = read_file(argv[1], &uki_size);
-    if (!uki_data) {
-        print_fail("Failed to read UKI", 0);
-        goto fail;
+    ret = strlen(argv[1]);
+    if (argv[1][ret - 4] == '.' && 
+        argv[1][ret - 3] == 'c' && 
+        argv[1][ret - 2] == 'f' &&
+        argv[1][ret - 1] == 'g') {
+        uki_data = read_file(argv[1], &uki_size);
+        if (!uki_data) {
+            print_fail("Failed to read UKI", 0);
+            goto fail;
+        }
+        grub_kernel = (char*)memmem(uki_data, uki_size, "/boot/vmlinuz", 13);
+        grub_kernel -= 5;
+        grub_kernel[0] = '/';
+        grub_kernel[1] = 'r';
+        grub_kernel[2] = 'o';
+        grub_kernel[3] = 'f';
+        grub_kernel[4] = 's';
+        grub_initrd = (char*)memmem(uki_data, uki_size, "/boot/initrd", 12);
+        grub_initrd -= 5;
+        grub_initrd[0] = '/';
+        grub_initrd[1] = 'r';
+        grub_initrd[2] = 'o';
+        grub_initrd[3] = 'f';
+        grub_initrd[4] = 's';
+        grub_cmdline = (char*)memmem(grub_kernel, uki_size - (grub_kernel - (char*)uki_data), " ", 1);
+        grub_cmdline[0] = 0;
+        grub_cmdline++;
+        ret = 0;
+        while (grub_initrd[ret] != '\n') ret++;
+        grub_initrd[ret] = 0;
+        ret = 0;
+        while (grub_cmdline[ret] != '\n') ret++;
+        grub_cmdline[ret] = 0;
+        print("[ INFO ] grub_kernel: ");
+        print(grub_kernel);
+        print("\n");
+        print("[ INFO ] grub_initrd: ");
+        print(grub_initrd);
+        print("\n");
+        print("[ INFO ] grub_cmdline: ");
+        print(grub_cmdline);
+        print("\n");
+        uki.cmdline_data = grub_cmdline;
+        uki.cmdline_size = strlen(grub_cmdline);
+        uki.linux_data = read_file(grub_kernel, &uki.linux_size);
+        uki.initrd_data = read_file(grub_initrd, &uki.initrd_size);
+    } else {
+        uki_data = read_file(argv[1], &uki_size);
+        if (!uki_data) {
+            print_fail("Failed to read UKI", 0);
+            goto fail;
+        }
+        ret = parse_uki(uki_data, uki_size, &uki);
+        if (ret < 0) {
+            print_fail("Failed to parse UKI", ret);
+            goto fail;
+        }
     }
-    ret = parse_uki(uki_data, uki_size, &uki);
-    if (ret < 0) {
-        print_fail("Failed to parse UKI", ret);
-        goto fail;
-    }
-    memcpy(cmdline, uki.cmdline_data, strlen(uki.cmdline_data) - 1);
-    
+    memcpy(cmdline, uki.cmdline_data, strlen(uki.cmdline_data));
+
     /* Build combined initrd: our cpio + original initrd */
     print_info("Building combined initrd...");
     
@@ -558,7 +649,7 @@ int main(int argc, char** argv) {
     }
     
     /* Build loop setup cpio */
-    cpio_size = build_loop_setup_cpio(combined_initrd, "img/arch.img");
+    cpio_size = build_loop_setup_cpio(combined_initrd);
     print("[ INFO ] CPIO size: ");
     print_num(cpio_size);
     println(" bytes");
@@ -573,11 +664,11 @@ int main(int argc, char** argv) {
     println(" bytes");
     
     /* Build cmdline - use our wrapper init, root is loop0p2 */
-    strcat(cmdline, "rdinit=/init2 drm.panic_screen=kmsg"); // console=ttyS0 
+    strcat(cmdline, " rdinit=/init2 drm.panic_screen=kmsg"); // console=ttyS0 
     
     print("[ INFO ] Using cmdline: ");
     println(cmdline);
-    
+
     /* Perform kexec */
     ret = do_kexec(uki.linux_data, uki.linux_size, combined_initrd, combined_size, cmdline);
     
