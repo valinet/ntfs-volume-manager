@@ -21,10 +21,12 @@ exec >/dev/console 2>&1
 mkdir /disk
 mkdir /proc
 mkdir /sys
-mount -t devtmpfs dev dev
-mount -t proc proc proc
-mount -t sysfs sys sys
+mount -t devtmpfs dev /dev
+mount -t proc proc /proc
+mount -t sysfs sys /sys
 [ -f /bin/espid ] || modprobe loop
+[ -f /bin/espid ] || modprobe ahci
+[ -f /bin/espid ] || modprobe sd_mod
 [ -f /bin/espid ] || modprobe xhci_hcd
 [ -f /bin/espid ] || modprobe uas
 [ -f /bin/espid ] || modprobe nvme
